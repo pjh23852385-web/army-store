@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Script from "next/script";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,9 +9,31 @@ import { Separator } from "@/components/ui/separator";
 import { useCartStore } from "@/lib/cart-store";
 import { formatPrice, generateOrderNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { TossPaymentsWidgets } from "@tosspayments/tosspayments-sdk";
 
 const CLIENT_KEY = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY || "test_gck_docs_Ovk5rk1EwkEbP0W23n07xlzm";
+const CUSTOMER_KEY = "@@ANONYMOUS";
+
+declare global {
+  interface Window {
+    TossPayments: (clientKey: string) => {
+      widgets: (params: { customerKey: string }) => TossWidgets;
+    };
+  }
+}
+
+interface TossWidgets {
+  setAmount: (amount: { currency: string; value: number }) => Promise<void>;
+  renderPaymentMethods: (params: { selector: string }) => Promise<void>;
+  renderAgreement: (params: { selector: string }) => Promise<void>;
+  requestPayment: (params: {
+    orderId: string;
+    orderName: string;
+    customerName?: string;
+    customerMobilePhone?: string;
+    successUrl: string;
+    failUrl: string;
+  }) => Promise<void>;
+}
 
 export default function CheckoutPage() {
   const { items, totalPrice } = useCartStore();
@@ -23,51 +46,42 @@ export default function CheckoutPage() {
     memo: "",
   });
   const [ready, setReady] = useState(false);
-  const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
+  const [scriptLoaded, setScriptLoaded] = useState(false);
+  const widgetsRef = useRef<TossWidgets | null>(null);
   const widgetRendered = useRef(false);
 
   const shipping = totalPrice() >= 50000 ? 0 : 3000;
   const total = totalPrice() + shipping;
 
-  // 토스페이먼츠 위젯 초기화 (동적 import로 SSR 회피)
+  // 스크립트 로드 후 위젯 초기화 및 렌더링
   useEffect(() => {
-    if (items.length === 0) return;
+    if (!scriptLoaded || items.length === 0 || widgetRendered.current) return;
 
-    async function initWidgets() {
-      const { loadTossPayments, ANONYMOUS } = await import("@tosspayments/tosspayments-sdk");
-      const tossPayments = await loadTossPayments(CLIENT_KEY);
-      const w = tossPayments.widgets({ customerKey: ANONYMOUS });
-      setWidgets(w);
-    }
+    async function initAndRender() {
+      try {
+        const tossPayments = window.TossPayments(CLIENT_KEY);
+        const widgets = tossPayments.widgets({ customerKey: CUSTOMER_KEY });
+        widgetsRef.current = widgets;
 
-    initWidgets();
-  }, [items.length]);
+        await widgets.setAmount({ currency: "KRW", value: total });
+        await widgets.renderPaymentMethods({ selector: "#payment-method" });
+        await widgets.renderAgreement({ selector: "#agreement" });
 
-  // 금액 설정 및 위젯 렌더링
-  useEffect(() => {
-    if (!widgets || items.length === 0) return;
-
-    async function renderWidgets() {
-      await widgets!.setAmount({ currency: "KRW", value: total });
-
-      if (!widgetRendered.current) {
-        await Promise.all([
-          widgets!.renderPaymentMethods({ selector: "#payment-method" }),
-          widgets!.renderAgreement({ selector: "#agreement" }),
-        ]);
         widgetRendered.current = true;
         setReady(true);
+      } catch (err) {
+        console.error("토스페이먼츠 위젯 초기화 실패:", err);
       }
     }
 
-    renderWidgets();
-  }, [widgets, items.length]);
+    initAndRender();
+  }, [scriptLoaded, items.length, total]);
 
   // 금액 변경 시 업데이트
   useEffect(() => {
-    if (!widgets || !widgetRendered.current) return;
-    widgets.setAmount({ currency: "KRW", value: total });
-  }, [total, widgets]);
+    if (!widgetsRef.current || !widgetRendered.current) return;
+    widgetsRef.current.setAmount({ currency: "KRW", value: total });
+  }, [total]);
 
   if (items.length === 0) {
     return (
@@ -81,6 +95,7 @@ export default function CheckoutPage() {
   }
 
   const handlePayment = async () => {
+    const widgets = widgetsRef.current;
     if (!widgets) return;
     if (!form.name || !form.phone || !form.address) {
       alert("주문자 정보와 배송지를 입력해주세요.");
@@ -131,6 +146,12 @@ export default function CheckoutPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-10">
+      <Script
+        src="https://js.tosspayments.com/v2/standard"
+        strategy="afterInteractive"
+        onLoad={() => setScriptLoaded(true)}
+      />
+
       <h1 className="text-3xl font-bold tracking-tight mb-8">주문/결제</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-5 gap-10">
