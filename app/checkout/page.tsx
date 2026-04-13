@@ -8,7 +8,6 @@ import { Separator } from "@/components/ui/separator";
 import { useCartStore } from "@/lib/cart-store";
 import { formatPrice, generateOrderNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { loadTossPayments, ANONYMOUS } from "@tosspayments/tosspayments-sdk";
 import type { TossPaymentsWidgets } from "@tosspayments/tosspayments-sdk";
 
 const CLIENT_KEY = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY || "test_gck_docs_Ovk5rk1EwkEbP0W23n07xlzm";
@@ -30,11 +29,12 @@ export default function CheckoutPage() {
   const shipping = totalPrice() >= 50000 ? 0 : 3000;
   const total = totalPrice() + shipping;
 
-  // 토스페이먼츠 위젯 초기화
+  // 토스페이먼츠 위젯 초기화 (동적 import로 SSR 회피)
   useEffect(() => {
     if (items.length === 0) return;
 
     async function initWidgets() {
+      const { loadTossPayments, ANONYMOUS } = await import("@tosspayments/tosspayments-sdk");
       const tossPayments = await loadTossPayments(CLIENT_KEY);
       const w = tossPayments.widgets({ customerKey: ANONYMOUS });
       setWidgets(w);
